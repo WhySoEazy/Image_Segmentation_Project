@@ -107,8 +107,18 @@ def train(args):
     optimizer = SGD(lr=args.lr , momentum=args.momentum , params=model.parameters())
     criterion = torch.nn.CrossEntropyLoss()
 
-    # if not os.path.isdir(args.trained_model):
-    #         os.mkdir(args.trained_model)
+    if args.checkpoint:
+        checkpoint = torch.load(args.checkpoint)
+        model.load_state_dict(checkpoint['model'])
+        optimizer.load_state_dict(checkpoint['optimizer'])
+        best_iou = checkpoint["best_map"]
+        start_epoch = checkpoint['epoch']
+    else:
+        start_epoch = 0
+        best_iou = 0
+
+    if not os.path.isdir(args.trained_model):
+            os.mkdir(args.trained_model)
 
     if os.path.isdir(args.logging):
         shutil.rmtree(args.logging , ignore_errors=True)
@@ -118,7 +128,7 @@ def train(args):
     num_iters = len(train_dataloader)
     accuracy_metric = MulticlassAccuracy(num_classes=len(train_dataset.classes)).to(device)
     mean_iou_metric = MulticlassJaccardIndex(num_classes=len(train_dataset.classes)).to(device)
-    for epoch in range(num_epochs):
+    for epoch in range(start_epoch , start_epoch + args.epochs):
         model.train()
         progress_bar = tqdm(train_dataloader)
         all_losses = []
@@ -150,15 +160,36 @@ def train(args):
                 targets = targets.to(device)
                 result = model(images)
                 output = result["out"]
-                test_acc.append(accuracy_metric(output , targets).item())
-                test_miou.append(mean_iou_metric(output , targets).item())
+                accuracy = accuracy_metric(output , targets).item()
+                miou = mean_iou_metric(output , targets).item()
+                test_acc.append(accuracy)
+                test_miou.append(miou)
 
         avg_acc = np.mean(test_acc)
         avg_miou = np.mean(test_miou)
         print("Accuracy: {} , mIoU: {}".format(avg_acc , avg_miou))
         writer.add_scalar("Valid/Accuracy" , avg_acc , epoch)
         writer.add_scalar("Valid/mIoU" , avg_miou , epoch)
-        
+
+        #SaveModel
+        if miou > best_iou:
+            best_iou = miou
+            checkpoint = {
+                "best_iou": best_iou,
+                "model": model.state_dict(),
+                "optimizer": optimizer.state_dict()
+            }
+            torch.save(checkpoint, "{}/best_deeplab.pt".format(args.trained_model))
+
+        checkpoint = {
+            "epoch": epoch + 1,
+            "best_map": best_iou,
+            "model": model.state_dict(),
+            "optimizer": optimizer.state_dict()
+        }
+        torch.save(checkpoint, "{}/last_deeplab.pt".format(args.trained_model))
+
+        print("Best mIoU: {}".format(best_iou))        
 
 
             
